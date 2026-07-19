@@ -4,76 +4,117 @@
 
 Cloudflare Workers 上で動くアプリケーションのテンプレート。構成要素:
 
-- **Hono** — ルーティング・ミドルウェア
+- **Hono + @hono/zod-openapi** — 型安全なルーティング。Zod スキーマで API 契約を定義
 - **D1** — リレーショナルデータストア（SQLite 互換）
 - **R2** — オブジェクトストレージ
 - **Workers AI** — 推論エンドポイント
 - **Sentry (`@sentry/cloudflare`)** — エラートラッキング
 - 静的アセット（`public/`）を同一 Worker から配信
 
-これらはすべてオプションとして組み込まれており、実プロジェクトの要件に応じて不要なものを削除する前提で設計されている（後述「オプション機能の削除ガイド」参照）。
+これらはすべてオプションとして組み込まれており、不要なものを削除する前提で設計されている（後述「オプション機能の削除ガイド」参照）。
 
 ## 必須開発コマンド
 
 ```bash
 npm run dev          # ローカル開発サーバー起動（wrangler dev）
-npm run test          # テスト実行（vitest）
-npm run test:watch    # テストのウォッチ実行
-npm run test:e2e      # E2E テスト実行（playwright）
-npm run typecheck     # tsc --noEmit
-npm run lint          # biome check
-npm run lint:fix       # biome check --write
-npm run reset-db       # ローカル D1 のマイグレーションを再適用
+npm run test         # 統合テスト実行（vitest + pool-workers）
+npm run test:watch   # テストのウォッチ実行
+npm run test:e2e     # E2E テスト実行（playwright、staging 手動）
+npm run typecheck    # tsc --noEmit
+npm run lint         # biome check
+npm run lint:fix     # biome check --write
+npm run reset-db     # ローカル D1 のマイグレーションを再適用
+npm run generate:openapi  # Zod スキーマから openapi.yaml を再生成
+npm run judges       # 全 judge を実行
 ```
 
-コードを変更したら、コミット前に最低限 `typecheck` と `lint` を通すこと。振る舞いに関わる変更は `test` も実行する。
+コードを変更したら、コミット前に `typecheck`、`lint`、`test` を通すこと。
+
+## 中核テーゼ
+
+> 正本の形式度が検証の自動化範囲を決める。
+
+検証できないものを「検証している」と書かない。検証が弱いなら弱いと書く。
+
+## 正本の対応表（このテーブルが唯一の正本）
+
+README / DESIGN.md はこのテーブルへの参照リンクのみ。テーブルを複製しない。
+
+| 関心事 | 正本 | 検証者 | 検証されること | 検証されないこと |
+|--------|------|--------|---------------|----------------|
+| インフラ構成 | `wrangler.toml` | Cloudflare runtime | バインディング名・型の存在 | wrangler.toml と env.ts の一致 |
+| データスキーマ | `migrations/*.sql` | D1 engine + `judges/migration-integrity.sh` | SQL構文・連番整合・既存ファイル不変 | migrations と types の型一致 |
+| API 契約 | `src/routes/*.ts` (Zod スキーマ) | TypeScript compiler + Hono 型システム | リクエスト/レスポンス形状の型一致 | API の意味的正しさ |
+| API ドキュメント | `openapi.yaml`（生成物。正本ではない） | `judges/openapi-sync.sh` | 生成物が最新か | — |
+| ドメインモデル | `src/types/*.ts` | TypeScript compiler | 型使用の内部整合 | 型と DB スキーマの意味的対応 |
+| コード構造規約 | `.claude/rules/*.md` | `judges/*.sh` (CI で実行) | 各ルールの不変条件 | ルールの網羅性 |
+| 設計意図 | `DESIGN.md` | 人間レビュー | なし | — |
+
+### 正本を持たない関心事（明示的な例外）
+
+- **静的アセット (`public/`)** — ファイル自体が成果物。形式化された仕様は不要
+
+### 縫い目（正本間の整合 — 現時点で未検証）
+
+- `wrangler.toml` ⇔ `src/types/env.ts`（バインディング名の一致）
+- `migrations/*.sql` ⇔ `src/types/*.ts`（カラム名と型の対応）
+
+将来的に型生成ツール（sql-to-ts 等）で埋める余地を残す。
+
+## code-first API 戦略
+
+@hono/zod-openapi により、ルート定義に Zod スキーマを埋め込む。
+
+```
+src/routes/*.ts (Zod スキーマ + ハンドラ = 正本)
+  ↓ npm run generate:openapi
+openapi.yaml (生成物。ドキュメント・外部ツール連携用)
+```
+
+- openapi.yaml を直接編集しない。変更は常に src/routes/ のスキーマ側から行う
+- `judges/openapi-sync.sh` が生成物の鮮度を検出する
 
 ## テスト戦略（トロフィー型）
 
-このプロジェクトはテストトロフィー（Testing Trophy）の配分に従う。ピラミッド型（ユニット多数・E2E少数）ではなく、**統合テストを厚く**する。
+**統合テストを主軸とする。** @cloudflare/vitest-pool-workers により、Miniflare 上で実際のバインディング（D1, R2）を使ってテストする。
 
-| 層 | 比重 | 対象 |
-|---|---|---|
-| ユニットテスト | 少 | 複雑な純粋ロジック（料金計算、バリデーション、パーサー等）のみ |
-| 統合テスト | 多 | ルートハンドラ + D1/R2/AI バインディングを通した振る舞い。主軸 |
-| E2E テスト | 中（主要パスのみ） | ユーザーが実際に踏む導線（サインアップ→主要操作→結果確認 等） |
+| 層 | 比重 | CI | 対象 |
+|---|---|---|---|
+| 統合テスト | 多 | ✓ | ルートハンドラ + バインディング。`SELF.fetch()` でリクエストを送る |
+| ユニットテスト | 少 | ✓ | 複雑な純粋ロジック（計算、バリデーション等）のみ |
+| E2E テスト | 少 | — | staging デプロイ後に手動で実行 |
 
-理由: Worker のバグの大半はハンドラ・ミドルウェア・バインディングの結合部で起きる。個々の関数を分離してモックしたユニットテストはその結合部の不整合を検出できない。E2E は実行コストが高いため主要パスに絞る。
+新しいエンドポイントを追加したら、対応する統合テストを先に書く（TDD）。
 
-新しいエンドポイントを追加したら、対応する統合テストを先に書く（TDD）。複雑なロジックを関数として切り出した場合のみ、その関数のユニットテストを追加する。
+## judges の実行
 
-## 正本の対応表
-
-各関心事には唯一の正本（canonical source）と、それを機械的に検証する verifier がある。矛盾が起きたら正本を信じる。
-
-| 関心事 | 正本 | 検証者 |
-|--------|------|--------|
-| インフラ構成 | `wrangler.toml` | Cloudflare ランタイム |
-| データスキーマ | `migrations/*.sql` | D1 エンジン |
-| API 契約 | `openapi.yaml` | 型生成 + CI |
-| 画面構造 | `dspec/*.dspec` | dspec パーサー |
-| ドメインモデル | `src/types/*.ts` | TypeScript コンパイラ |
-| 振る舞い不変条件 | `.claude/rules/*.md` | `judges/*.sh` |
-| 設計意図 | `DESIGN.md` | 人間（レビュー） |
+| タイミング | 方法 |
+|-----------|------|
+| CI（push/PR） | `npm run judges` |
+| エージェントフロー | `.claude/commands/develop.md` に従う |
+| 手動 | `bash judges/<name>.sh` |
 
 ## 新機能追加時のチェックリスト
 
-1. **`DESIGN.md` に設計判断を記録する** — なぜその設計にしたか、代替案は何だったか
-2. **該当する正本を更新する** — `migrations/`（スキーマ変更）、`openapi.yaml`（API変更）、`src/types/*.ts`（ドメインモデル変更）等。正本を更新せずに実装だけ進めない
-3. **テストを書く** — トロフィー型の配分に従う（上記参照）
-4. **judges が通ることを確認する** — `.claude/rules/*.md` に対応する `judges/*.sh` を実行し、違反がないことを確認する
+1. **Zod スキーマでルートを定義する** — `src/routes/` にスキーマ付きルートを追加。これが API 契約の正本になる
+2. **統合テストを書く** — SELF.fetch() で実際のリクエストを送り、レスポンスを検証
+3. **マイグレーションを追加する**（スキーマ変更時）— `migrations/` に新しい連番ファイル
+4. **openapi.yaml を再生成する** — `npm run generate:openapi` してコミット
+5. **judges が通ることを確認する** — `npm run judges`
 
-正本を更新せずにコードだけ変更すると、正本と実装が乖離し、次にその正本を読んだ人（人間もエージェントも）が誤った前提で作業することになる。これが本プロジェクトで最も避けたい失敗モード。
+## Secrets 管理
+
+- `wrangler.toml [vars]` = 非機密の設定値のみ。空文字プレースホルダー禁止
+- 機密値 → `wrangler secret put <名前>`
+- `src/types/env.ts` では secret も non-secret も `Bindings` 型に含める（ランタイムでは区別がない）
 
 ## オプション機能の削除ガイド
-
-テンプレートには R2 / Workers AI / Sentry / フロントエンドがデフォルトで含まれる。使わないものは早期に削除する（残したまま放置すると、未使用のバインディングやコードが正本と実装の乖離を生む）。
 
 ### R2 を外す
 
 - `wrangler.toml` の `[[r2_buckets]]` を削除
 - `src/types/env.ts` から `R2Bucket` の宣言を削除
-- R2 を参照しているハンドラ・テストがあれば削除または置き換え
+- R2 を参照しているハンドラ・テストがあれば削除
 
 ### Workers AI を外す
 
@@ -83,30 +124,29 @@ npm run reset-db       # ローカル D1 のマイグレーションを再適用
 ### Sentry を外す
 
 - `package.json` から `@sentry/cloudflare` を削除
-- `src/middleware/error-handler.ts` を削除
-- `src/index.ts` から Sentry のラップ処理を削除
-- `wrangler.toml` の `SENTRY_DSN` 変数を削除
+- `src/index.ts` の Sentry ラップを外し、`src/app.ts` の `app` を直接 export default にする
+- `src/middleware/error-handler.ts` から Sentry 呼び出しを削除
+- `src/types/env.ts` から `SENTRY_DSN` を削除
 
 ### フロントエンドを外す
 
 - `public/` ディレクトリを削除
 - `wrangler.toml` の `[assets]` を削除
 
-いずれの削除も、削除後に `npm run typecheck` と `npm run test` を実行し、参照切れがないことを確認する。
+いずれの削除も、削除後に `npm run typecheck` と `npm run test` を通すこと。
 
 ## Worktree 運用
 
-複数の機能を並行開発する場合は `git worktree` でディレクトリを分離する。同一リポジトリを複数セッションで同時に触ると、未コミット変更の混線や `git add -A` による意図しないファイル混入が起きやすい。
+複数の機能を並行開発する場合は `git worktree` でディレクトリを分離する。
 
 ```bash
 git worktree add ../cloudflare-project-2026-feature-x feature/x
 ```
 
-worktree ごとに `npm install` を実行してから作業を始める（`node_modules` は worktree 間で共有されない）。作業が終わったら `git worktree remove` で片付ける。
-
 ## コーディング規約
 
-- **TypeScript strict モード** — `tsconfig.json` で `strict: true` を設定済み。`any` を安易に使わない
-- **Biome** — lint・フォーマットは Biome に統一する（ESLint/Prettier は使わない）。`npm run lint:fix` で自動修正
+- **TypeScript strict モード** — `any` を安易に使わない
+- **Biome** — lint・フォーマットは Biome に統一。設定は `biome.json`
 - **型はドメインモデルの正本 (`src/types/*.ts`) に集約する** — ハンドラごとに型を再定義しない
-- コメントは WHY のみ。WHAT はコードと命名で表現する
+- **API の型は Zod スキーマが正本** — `src/schemas/` に定義し、ルートから参照する
+- コメントは WHY のみ

@@ -4,7 +4,6 @@ compatibility_date = "2026-06-27"
 compatibility_flags = ["nodejs_als"]
 
 [vars]
-SENTRY_DSN = ""
 
 [assets]
 directory = "public"
@@ -26,7 +25,6 @@ bucket_name = "cloudflare-project-2026-bucket"
 # bindings は環境間で継承されないため全て明示定義
 
 [env.staging.vars]
-SENTRY_DSN = ""
 
 [env.staging.assets]
 directory = "public"

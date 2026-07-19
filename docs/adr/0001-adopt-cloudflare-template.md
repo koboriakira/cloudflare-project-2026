@@ -1,7 +1,7 @@
 # ADR-0001: cloudflare-project-2026 テンプレートの採用
 
 ## Status
-Accepted
+Superseded by ADR-0002
 
 ## Date
 2026-07-19
