@@ -1,0 +1,44 @@
+name = "cloudflare-project-2026"
+main = "src/index.ts"
+compatibility_date = "2026-06-27"
+compatibility_flags = ["nodejs_als"]
+
+[vars]
+SENTRY_DSN = ""
+
+[assets]
+directory = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudflare-project-2026-db"
+database_id = "YOUR_DATABASE_ID"
+
+[ai]
+binding = "AI"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cloudflare-project-2026-bucket"
+
+# --- Staging 環境 ---
+# wrangler deploy --env staging でデプロイ
+# bindings は環境間で継承されないため全て明示定義
+
+[env.staging.vars]
+SENTRY_DSN = ""
+
+[env.staging.assets]
+directory = "public"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "cloudflare-project-2026-db-staging"
+database_id = "YOUR_STAGING_DATABASE_ID"
+
+[env.staging.ai]
+binding = "AI"
+
+[[env.staging.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cloudflare-project-2026-bucket-staging"

@@ -1,0 +1,29 @@
+{
+  "name": "cloudflare-project-2026",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "bash bin/dev.sh",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:staging": "playwright test --config playwright.staging.config.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "reset-db": "bash bin/reset-db.sh",
+    "lint": "npx @biomejs/biome check src/",
+    "lint:fix": "npx @biomejs/biome check --write src/"
+  },
+  "dependencies": {
+    "@sentry/cloudflare": "^10.62.0",
+    "hono": "^4.12.27"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260627.1",
+    "@playwright/test": "^1.61.1",
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.6",
+    "wrangler": "^4.105.0"
+  }
+}
